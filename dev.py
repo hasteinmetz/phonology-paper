@@ -4,6 +4,7 @@ See the paper https://pages.jh.edu/csmit372/pdf/smithohara_scil2021_paper.pdf
 Edits by Hilly Steinmetz
 '''
 import glob
+from typing import Callable
 import matplotlib.pyplot as plt
 import os
 import re
@@ -15,7 +16,28 @@ from torchtext.data import BucketIterator, Field, TabularDataset
 from tqdm import tqdm
 import warnings
 import csv
+from functools import reduce
 
+##############
+# PREPROCESS #
+##############
+
+class LinearTransform:
+    def __init__(self, class_labels: str) -> None:
+        min_str = lambda x: min([int(a) for a in x.split(",")]) if isinstance(x, str) else x
+        min_str_list = lambda x, y: min(min_str(x), min_str(y))
+        self.lowest_num = reduce(min_str_list, class_labels)
+
+    def list_transform(self, x: str, operator: Callable, y: int):
+        return list(map(lambda x: operator(int(x), y), x.split(",")))
+
+    def linear_transform(self, matrix: str):
+        sub = lambda x, y: x - y
+        return self.list_transform(matrix, sub, self.lowest_num)
+
+    def linear_transform_back(self, matrix: str):
+        add = lambda x: x + self.lowest_num
+        return list(map(add, matrix))
 
 ###########
 # DATASET #
@@ -26,7 +48,7 @@ class Dataset:  # Dataset object class utilizing Torchtext
     def __init__(self, path, batch_size=1):
 
         self.batch_size = batch_size
-        self.input_field, self.output_field, self.data, self.data_iter = self.process_data(path)
+        self.input_field, self.output_field_la, self.output_field_tb, self.data, self.data_iter = self.process_data(path)
         self.word2trialnum = self.make_trial_lookup(path)
         self.seg2ind = self.input_field.vocab.stoi  # from segment to torchtext vocab index
 
@@ -34,22 +56,30 @@ class Dataset:  # Dataset object class utilizing Torchtext
 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         make_list = lambda b: [item for item in b.split(',')]
-        make_float_list = lambda b: [float(item) for item in b.split(',')]
-
-
-        input_field = Field(sequential=True, use_vocab=True, tokenize=make_list)  # morpheme segment format
-        output_field = Field(sequential=True, use_vocab=False, tokenize=make_float_list)  # lip trajectory outputs
-
-        datafields = [('underlying', None), ('surface', None), ('root_indices', None), ('suffix_indices', None),
-                      ('word_indices', input_field), ('lip_output', output_field), ('tb_output', output_field)]
-
-        data = TabularDataset(path=path, format='tsv', skip_header=True, fields=datafields)
+        make_float = lambda b: [float(item) for item in b.split(',')]
 
         with open(path, 'r') as file:
-            tsv_reader = csv.reader(file, delimiter='\t')
-            vocabulary = [row[0] for row in tsv_reader]
+            tsv_reader = csv.reader(file, delimiter='\t', quotechar='"')
+            next(tsv_reader)
+            vocab, lip_outs, tb_outs = [], [], []
+            for row in tsv_reader:
+                vocab.append(row[0])
+        #         lip_outs.append(row[5])
+        #         tb_outs.append(row[6])
 
-        self.vocab = vocabulary
+        self.vocabulary = vocab
+
+        # self.linear_tr_la = LinearTransform(lip_outs)
+        # self.linear_tr_tb = LinearTransform(tb_outs)
+
+        input_field = Field(sequential=True, use_vocab=True, tokenize=make_list)  # morpheme segment format
+        output_field_la = Field(sequential=True, use_vocab=False, tokenize=make_float)  # lip trajectory outputs
+        output_field_tb = Field(sequential=True, use_vocab=False, tokenize=make_float)   # yb trajectory outputs
+
+        datafields = [('underlying', None), ('surface', None), ('root_indices', None), ('suffix_indices', None),
+                      ('word_indices', input_field), ('lip_output', output_field_la), ('tb_output', output_field_tb)]
+
+        data = TabularDataset(path=path, format='tsv', skip_header=True, fields=datafields)
 
         input_field.build_vocab(data, min_freq=1)
         data_iter = BucketIterator(data,
@@ -58,7 +88,7 @@ class Dataset:  # Dataset object class utilizing Torchtext
                                    repeat=False,
                                    device=device)
 
-        return input_field, output_field, data, data_iter
+        return input_field, output_field_la, output_field_tb, data, data_iter
 
     def make_trial_lookup(self, path):  # create lookup dictionary for use by make_trial method
         with open(path, 'r') as file:
@@ -302,7 +332,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
                     source = batch.word_indices
                     target_la = batch.lip_output
                     target_tb = batch.tb_output
-                    target = torch.cat((target_la, target_tb), 1)
+                    target = torch.cat((target_la, target_tb), axis=1)
                     predicted, enc_dec_attn_seq = self(source, target)
 
                     loss = self.loss_function(predicted.float(), target.float())
@@ -341,7 +371,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
     def plot_loss(self):  # Plot the model's average trial loss per epoch
         plt.plot(self.loss_list, '-')
         plt.title('Average Trial Loss Per Epoch')
-        plt.ylabel('Sum of Squared Error')
+        plt.ylabel('Cross Entropy Loss')
         plt.xlabel('Epoch')
 
     def evaluate_word(self, training_data, word, show_target=True):  # Evaluate the model's performance on a single word
@@ -360,7 +390,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
             print(f'Predicted output:\n{predicted}')
             print(f'Encoder Decoder Attention:\n{enc_dec_attn_seq}')
         predicted_la = predicted[:, 0]
-        predicted_tb = predicted[:, 1]
+        predicted_tb = predicted[:, 0]
 
         figure_outputs, (lip_plot, tb_plot) = plt.subplots(2)
 
