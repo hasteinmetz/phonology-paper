@@ -47,9 +47,9 @@ class Dataset:  # Dataset object class utilizing Torchtext
 
         with open(path, 'r') as file:
             tsv_reader = csv.reader(file, delimiter='\t')
-            vocabulary = [row[0] for row in tsv_reader]
+            vocab = [row[0] for row in tsv_reader]
 
-        self.vocabulary = vocabulary
+        self.vocab = vocab
 
         input_field.build_vocab(data, min_freq=1)
         data_iter = BucketIterator(data,
