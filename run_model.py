@@ -4,7 +4,7 @@ Script to run model code from https://github.com/caitlinsmith14/gestnet
 See the paper https://pages.jh.edu/csmit372/pdf/smithohara_scil2021_paper.pdf
 The code was adapted to see if NN's would pay attention to 2 harmony systems
 '''
-from gestnet import *
+from dev import *
 import argparse
 
 def main(args):

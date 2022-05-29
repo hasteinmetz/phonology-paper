@@ -17,6 +17,7 @@ from tqdm import tqdm
 import warnings
 import csv
 from functools import reduce
+from typing import *
 
 ##############
 # PREPROCESS #
@@ -27,17 +28,26 @@ class LinearTransform:
         min_str = lambda x: min([int(a) for a in x.split(",")]) if isinstance(x, str) else x
         min_str_list = lambda x, y: min(min_str(x), min_str(y))
         self.lowest_num = reduce(min_str_list, class_labels)
+        max_str = lambda x: max([int(a) for a in x.split(",")]) if isinstance(x, str) else x
+        max_str_list = lambda x, y: max(max_str(x), max_str(y))
+        self.highest_num = reduce(max_str_list, class_labels)
+        self.range = float(self.highest_num - self.lowest_num)
 
-    def list_transform(self, x: str, operator: Callable, y: int):
-        return list(map(lambda x: operator(int(x), y), x.split(",")))
+    def list_transform(self, x: str, operator: Callable, y: float):
+        r = list(map(lambda x: operator(float(x), y), [float(a) for a in x.split(",")]))
+        return r
 
-    def linear_transform(self, matrix: str):
-        sub = lambda x, y: x - y
-        return self.list_transform(matrix, sub, self.lowest_num)
+    def linear_transform_list(self, matrix: str):
+        div = lambda x, y: x / y
+        r = self.list_transform(matrix, div, self.range)
+        return r
 
-    def linear_transform_back(self, matrix: str):
-        add = lambda x: x + self.lowest_num
-        return list(map(add, matrix))
+    def linear_transform(self, matrix: torch.Tensor):
+        return torch.divide(matrix, self.range)
+
+    def linear_transform_back(self, matrix: List[float]):
+        r = [x * self.range for x in matrix]
+        return r
 
 ###########
 # DATASET #
@@ -61,20 +71,23 @@ class Dataset:  # Dataset object class utilizing Torchtext
         with open(path, 'r') as file:
             tsv_reader = csv.reader(file, delimiter='\t', quotechar='"')
             next(tsv_reader)
-            vocab, lip_outs, tb_outs = [], [], []
+            vocabulary, lip_outs, tb_outs = [], [], []
             for row in tsv_reader:
-                vocab.append(row[0])
-        #         lip_outs.append(row[5])
-        #         tb_outs.append(row[6])
+                vocabulary.append(row[0])
+                lip_outs.append(row[5])
+                tb_outs.append(row[6])
 
-        self.vocabulary = vocab
+        self.vocabulary = vocabulary
 
-        # self.linear_tr_la = LinearTransform(lip_outs)
-        # self.linear_tr_tb = LinearTransform(tb_outs)
+        self.linear_tr_la = LinearTransform(lip_outs)
+        self.linear_tr_tb = LinearTransform(tb_outs)
+
+        linear_tr_la = lambda x: self.linear_tr_la.linear_transform_list(x)
+        linear_tr_tb = lambda x: self.linear_tr_tb.linear_transform_list(x)
 
         input_field = Field(sequential=True, use_vocab=True, tokenize=make_list)  # morpheme segment format
-        output_field_la = Field(sequential=True, use_vocab=False, tokenize=make_float)  # lip trajectory outputs
-        output_field_tb = Field(sequential=True, use_vocab=False, tokenize=make_float)   # yb trajectory outputs
+        output_field_la = Field(sequential=True, use_vocab=False, tokenize=linear_tr_la, pad_token=0, dtype=torch.float)  # lip trajectory outputs
+        output_field_tb = Field(sequential=True, use_vocab=False, tokenize=linear_tr_tb, pad_token=0, dtype=torch.float)   # yb trajectory outputs
 
         datafields = [('underlying', None), ('surface', None), ('root_indices', None), ('suffix_indices', None),
                       ('word_indices', input_field), ('lip_output', output_field_la), ('tb_output', output_field_tb)]
@@ -112,8 +125,8 @@ class Dataset:  # Dataset object class utilizing Torchtext
 
         source_tensor = torch.tensor(source_list, dtype=torch.long).view(-1, 1)
 
-        lip_target_tensor = torch.tensor(lip_target, dtype=torch.double).view(-1, 1)
-        tb_target_tensor = torch.tensor(tb_target, dtype=torch.double).view(-1, 1)
+        lip_target_tensor = torch.tensor(lip_target, dtype=torch.float).view(-1, 1)
+        tb_target_tensor = torch.tensor(tb_target, dtype=torch.float).view(-1, 1)
 
         return source_tensor, lip_target_tensor, tb_target_tensor
 
@@ -230,8 +243,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
         # Hyperparameters / Device Settings
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        # changed to cross entropy loss
-        self.loss_function = nn.MSELoss(reduction='sum')
+        self.loss_function = nn.L1Loss(reduction='sum')
 
         # Load a trained model and its subcomponents
 
@@ -300,8 +312,8 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
         target_length = target_seq.shape[0]
         target_output_size = self.decoder.output_size
 
-        output_seq = torch.zeros(target_length, target_output_size).to(self.device)
-        attn_map_seq = torch.zeros(target_length, input_length).to(self.device)
+        output_seq = torch.zeros(target_length, target_output_size, dtype=float).to(self.device)
+        attn_map_seq = torch.zeros(target_length, input_length, dtype=float).to(self.device)
 
         encoder_outputs, hidden, embeddings = self.encoder(input_seq)
 
@@ -389,8 +401,14 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
             print(f'Target output:\n{target}')
             print(f'Predicted output:\n{predicted}')
             print(f'Encoder Decoder Attention:\n{enc_dec_attn_seq}')
-        predicted_la = predicted[:, 0]
-        predicted_tb = predicted[:, 0]
+
+        # transform the predictions back
+        predicted_la = training_data.linear_tr_la.linear_transform_back(predicted[:, 0])
+        predicted_tb = training_data.linear_tr_tb.linear_transform_back(predicted[:, 1])
+
+        # transform the targets back
+        target_la = training_data.linear_tr_la.linear_transform_back(target_la)
+        target_tb = training_data.linear_tr_tb.linear_transform_back(target_tb)
 
         figure_outputs, (lip_plot, tb_plot) = plt.subplots(2)
 
