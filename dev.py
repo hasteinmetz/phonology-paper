@@ -229,11 +229,11 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
     def __init__(self,
                  training_data=None,  # training data (Dataset class object)
                  load='',  # path to file for loading previously trained model
-                 seg_embed_size=32,  # size of segment embedding
-                 hidden_size=32,  # size of hidden layer
-                 attn_size=32,  # size of encoder-decoder attention vector
+                 seg_embed_size=64,  # size of segment embedding
+                 hidden_size=64,  # size of hidden layer
+                 attn_size=64,  # size of encoder-decoder attention vector
                  optimizer='adam',  # what type of optimizer (Adam or SGD)
-                 learning_rate=.001):  # learning rate of the model
+                 learning_rate=.0001):  # learning rate of the model
         super(Seq2Seq, self).__init__()
 
         # Seq2Seq Parameters
@@ -243,7 +243,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
         # Hyperparameters / Device Settings
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.loss_function = nn.L1Loss(reduction='sum')
+        self.loss_function = nn.MSELoss(reduction='mean')
 
         # Load a trained model and its subcomponents
 
@@ -337,7 +337,10 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            for _ in tqdm(range(n_epochs)):
+            for e in tqdm(range(n_epochs)):
+
+                early_stop_loss = 0
+                previous_loss = 1000
 
                 for i, batch in enumerate(training_data.data_iter):
                     self.zero_grad()
@@ -345,11 +348,24 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
                     target_la = batch.lip_output
                     target_tb = batch.tb_output
                     target = torch.cat((target_la, target_tb), axis=1)
+                    mask = torch.where(target != 0, 1., 0.)
                     predicted, enc_dec_attn_seq = self(source, target)
+                    predicted_masked = mask * predicted
 
-                    loss = self.loss_function(predicted.float(), target.float())
+                    loss = self.loss_function(predicted_masked.float(), target.float())
                     loss.backward()
                     self.optimizer.step()
+                
+                avg_loss = self.evaluate_model(training_data, verbose=False)
+
+                if avg_loss > previous_loss:
+                    early_stop_loss += 1
+                    if early_stop_loss > 4:
+                        print(f"EARLY STOPPING AT EPOCH {e}")
+                        break
+                else:
+                    early_stop_loss = 0
+                previous_loss = avg_loss
 
                 self.loss_list.append(self.evaluate_model(training_data, verbose=False))
 
@@ -376,14 +392,14 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 
             if verbose:
                 # changed to cross entropy loss
-                print(f'Average cross entropy loss per word this epoch:')
+                print(f'Average loss per word this epoch:')
 
             return average_loss
 
     def plot_loss(self):  # Plot the model's average trial loss per epoch
         plt.plot(self.loss_list, '-')
         plt.title('Average Trial Loss Per Epoch')
-        plt.ylabel('Cross Entropy Loss')
+        plt.ylabel('MSE Loss')
         plt.xlabel('Epoch')
 
     def evaluate_word(self, training_data, word, show_target=True):  # Evaluate the model's performance on a single word
@@ -419,6 +435,8 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
         lip_plot.plot(predicted_la, label='Predicted')
         if show_target:
             lip_plot.plot(target_la, label='Target')
+        if target_la[-4:] == [0,0,0,0]:
+            lip_plot.set_xlim(0,5)
         lip_plot.set_title('Lip Tract Variable')
         lip_plot.set_ylabel('Constriction Degree (Lip Aperture)')
         lip_plot.set_ylim(12, -3)
@@ -430,6 +448,8 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
         tb_plot.plot(predicted_tb)
         if show_target:
             tb_plot.plot(target_tb)
+        if target_tb[-4:] == [0,0,0,0]:
+            tb_plot.set_xlim(0,5)
         tb_plot.set_title('Tongue Body Height Tract Variable')
         tb_plot.set_xlabel('Time')
         tb_plot.set_ylabel('Constriction Degree (Height)')
