@@ -22,7 +22,7 @@ def main(args):
     model = Seq2Seq(training_data=data_stepwise)
 
     if args.load == 'none':
-        model.train_model(training_data=data_stepwise, n_epochs=200)
+        model.train_model(training_data=data_stepwise, n_epochs=20)
         model.save()
     else:
         model = Seq2Seq(load=args.load)
@@ -49,7 +49,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--input', help="(str) the input data file", default='./trainingdata_stepwise_turkish_extended.tsv'
+        '--input', help="(str) the input data file", default='./trainingdata_stepwise_turkish.tsv'
         )
     parser.add_argument('--load', help="(str) the model file to load", default="none")
     args = parser.parse_args()

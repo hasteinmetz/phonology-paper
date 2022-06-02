@@ -24,6 +24,9 @@ from typing import *
 ##############
 
 class LinearTransform:
+    '''
+    Scales the data for each gesture to ensure that the network learns equallly from each
+    '''
     def __init__(self, class_labels: str) -> None:
         min_str = lambda x: min([int(a) for a in x.split(",")]) if isinstance(x, str) else x
         min_str_list = lambda x, y: min(min_str(x), min_str(y))
@@ -90,7 +93,8 @@ class Dataset:  # Dataset object class utilizing Torchtext
         output_field_tb = Field(sequential=True, use_vocab=False, tokenize=linear_tr_tb, pad_token=0, dtype=torch.float)   # yb trajectory outputs
 
         datafields = [('underlying', None), ('surface', None), ('root_indices', None), ('suffix_indices', None),
-                      ('word_indices', input_field), ('lip_output', output_field_la), ('tb_output', output_field_tb)]
+                      ('word_indices', input_field), ('lip_output', output_field_la), ('tb_output', output_field_tb),
+                      ]
 
         data = TabularDataset(path=path, format='tsv', skip_header=True, fields=datafields)
 
