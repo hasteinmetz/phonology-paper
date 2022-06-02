@@ -59,7 +59,7 @@ class LinearTransform:
 class Dataset:  # Dataset object class utilizing Torchtext
 
     def __init__(self, path, batch_size=1):
-
+        print(f"{path}")
         self.batch_size = batch_size
         self.input_field, self.output_field_la, self.output_field_tb, self.data, self.data_iter = self.process_data(path)
         self.word2trialnum = self.make_trial_lookup(path)
@@ -74,27 +74,35 @@ class Dataset:  # Dataset object class utilizing Torchtext
         with open(path, 'r') as file:
             tsv_reader = csv.reader(file, delimiter='\t', quotechar='"')
             next(tsv_reader)
-            vocabulary, lip_outs, tb_outs = [], [], []
+            vocabulary, la_outs, lx_outs, tb_outs, tc_outs = [], [], [], [], []
             for row in tsv_reader:
                 vocabulary.append(row[0])
-                lip_outs.append(row[5])
+                la_outs.append(row[5])
                 tb_outs.append(row[6])
+                lx_outs.append(row[7])
+                tc_outs.append(row[8])
 
         self.vocabulary = vocabulary
 
-        self.linear_tr_la = LinearTransform(lip_outs)
+        self.linear_tr_la = LinearTransform(la_outs)
         self.linear_tr_tb = LinearTransform(tb_outs)
+        self.linear_tr_lx = LinearTransform(lx_outs)
+        self.linear_tr_tc = LinearTransform(tc_outs)
 
         linear_tr_la = lambda x: self.linear_tr_la.linear_transform_list(x)
         linear_tr_tb = lambda x: self.linear_tr_tb.linear_transform_list(x)
+        linear_tr_lx = lambda x: self.linear_tr_lx.linear_transform_list(x)
+        linear_tr_tc = lambda x: self.linear_tr_tc.linear_transform_list(x)
 
         input_field = Field(sequential=True, use_vocab=True, tokenize=make_list)  # morpheme segment format
         output_field_la = Field(sequential=True, use_vocab=False, tokenize=linear_tr_la, pad_token=0, dtype=torch.float)  # lip trajectory outputs
-        output_field_tb = Field(sequential=True, use_vocab=False, tokenize=linear_tr_tb, pad_token=0, dtype=torch.float)   # yb trajectory outputs
+        output_field_tb = Field(sequential=True, use_vocab=False, tokenize=linear_tr_tb, pad_token=0, dtype=torch.float)   # tb trajectory outputs
+        output_field_lx = Field(sequential=True, use_vocab=False, tokenize=linear_tr_lx, pad_token=0, dtype=torch.float)  # lx trajectory outputs
+        output_field_tc = Field(sequential=True, use_vocab=False, tokenize=linear_tr_tc, pad_token=0, dtype=torch.float)   # tb trajectory outputs
 
         datafields = [('underlying', None), ('surface', None), ('root_indices', None), ('suffix_indices', None),
-                      ('word_indices', input_field), ('lip_output', output_field_la), ('tb_output', output_field_tb),
-                      ]
+                      ('word_indices', input_field), ('la_output', output_field_la), ('tb_output', output_field_tb),
+                      ('lx_output', output_field_lx), ('tc_output', output_field_tc)]
 
         data = TabularDataset(path=path, format='tsv', skip_header=True, fields=datafields)
 
@@ -123,8 +131,10 @@ class Dataset:  # Dataset object class utilizing Torchtext
         trialnum = self.word2trialnum[word]
 
         source = self.data.examples[trialnum].word_indices
-        lip_target = self.data.examples[trialnum].lip_output
+        la_target = self.data.examples[trialnum].la_output
         tb_target = self.data.examples[trialnum].tb_output
+        lx_target = self.data.examples[trialnum].lx_output
+        tc_target = self.data.examples[trialnum].tc_output
 
         source_list = []
 
@@ -133,10 +143,12 @@ class Dataset:  # Dataset object class utilizing Torchtext
 
         source_tensor = torch.tensor(source_list, dtype=torch.long).view(-1, 1)
 
-        lip_target_tensor = torch.tensor(lip_target, dtype=torch.float).view(-1, 1)
+        la_target_tensor = torch.tensor(la_target, dtype=torch.float).view(-1, 1)
         tb_target_tensor = torch.tensor(tb_target, dtype=torch.float).view(-1, 1)
+        lx_target_tensor = torch.tensor(lx_target, dtype=torch.float).view(-1, 1)
+        tc_target_tensor = torch.tensor(tc_target, dtype=torch.float).view(-1, 1)
 
-        return source_tensor, lip_target_tensor, tb_target_tensor
+        return source_tensor, la_target_tensor, tb_target_tensor, lx_target_tensor, tc_target_tensor
 
 
 ###########
@@ -211,7 +223,7 @@ class Decoder(nn.Module):
 
         self.params = hidden_size
 
-        self.output_size = 2  # number of articulators (lip and tongue body)
+        self.output_size = 4  # number of articulators (lip and tongue body)
 
         self.attn = attn  # encoder-decoder attention mechamism
         self.rnn = nn.RNN(self.output_size+self.attn.params[0], hidden_size)  # RNN hidden layer
@@ -246,7 +258,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 
         # Seq2Seq Parameters
 
-        self.init_input_tok = nn.Parameter(torch.rand(1, 2))  # initialize first decoder input (learnable)
+        self.init_input_tok = nn.Parameter(torch.rand(1, 4))  # initialize first decoder input (learnable)
 
         # Hyperparameters / Device Settings
 
@@ -353,9 +365,11 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
                 for i, batch in enumerate(training_data.data_iter):
                     self.zero_grad()
                     source = batch.word_indices
-                    target_la = batch.lip_output
+                    target_la = batch.la_output
                     target_tb = batch.tb_output
-                    target = torch.cat((target_la, target_tb), axis=1)
+                    target_lx = batch.lx_output
+                    target_tc = batch.tc_output
+                    target = torch.cat((target_la, target_tb, target_lx, target_tc), axis=1)
                     mask = torch.where(target != 0, 1., 0.)
                     predicted, enc_dec_attn_seq = self(source, target)
                     predicted_masked = mask * predicted
@@ -388,9 +402,11 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 
                 for i, batch in enumerate(training_data.data_iter):
                     source = batch.word_indices
-                    target_la = batch.lip_output
+                    target_la = batch.la_output
                     target_tb = batch.tb_output
-                    target = torch.cat((target_la, target_tb), 1)
+                    target_lx = batch.lx_output
+                    target_tc = batch.tc_output
+                    target = torch.cat((target_la, target_tb, target_lx, target_tc), axis=1)
                     predicted, _ = self(source, target)
 
                     loss = self.loss_function(predicted.float(), target.float())
@@ -419,7 +435,9 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
             source = trial[0]
             target_la = trial[1]
             target_tb = trial[2]
-            target = torch.cat((target_la, target_tb), 1)
+            target_lx = trial[3]
+            target_tc = trial[4]
+            target = torch.cat((target_la, target_tb, target_lx, target_tc), 1)
 
             predicted, enc_dec_attn_seq = self(source, target)
             print(f'Target output:\n{target}')
@@ -429,27 +447,31 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
         # transform the predictions back
         predicted_la = training_data.linear_tr_la.linear_transform_back(predicted[:, 0])
         predicted_tb = training_data.linear_tr_tb.linear_transform_back(predicted[:, 1])
+        predicted_lx = training_data.linear_tr_lx.linear_transform_back(predicted[:, 2])
+        predicted_tc = training_data.linear_tr_tc.linear_transform_back(predicted[:, 3])
 
         # transform the targets back
         target_la = training_data.linear_tr_la.linear_transform_back(target_la)
         target_tb = training_data.linear_tr_tb.linear_transform_back(target_tb)
+        target_lx = training_data.linear_tr_lx.linear_transform_back(target_lx)
+        target_tc = training_data.linear_tr_tc.linear_transform_back(target_tc)
 
-        figure_outputs, (lip_plot, tb_plot) = plt.subplots(2)
+        figure_outputs, (la_plot, tb_plot) = plt.subplots(2)
 
         figure_outputs.suptitle('Predicted Tract Variable Trajectories')
 
         # Lip Aperture Trajectory Subplot
 
-        lip_plot.plot(predicted_la, label='Predicted')
+        la_plot.plot(predicted_la, label='Predicted')
         if show_target:
-            lip_plot.plot(target_la, label='Target')
+            la_plot.plot(target_la, label='Target')
         if target_la[-4:] == [0,0,0,0]:
-            lip_plot.set_xlim(0,5)
-        lip_plot.set_title('Lip Tract Variable')
-        lip_plot.set_ylabel('Constriction Degree (Lip Aperture)')
-        lip_plot.set_ylim(12, -3)
+            la_plot.set_xlim(0,5)
+        la_plot.set_title('Lip Tract Variable')
+        la_plot.set_ylabel('Constriction Degree (Lip Aperture)')
+        la_plot.set_ylim(12, -3)
 
-        lip_plot.legend()
+        la_plot.legend()
 
         # Tongue Body (Height) Trajectory Subplot
 
@@ -460,8 +482,38 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
             tb_plot.set_xlim(0,5)
         tb_plot.set_title('Tongue Body Height Tract Variable')
         tb_plot.set_xlabel('Time')
-        tb_plot.set_ylabel('Constriction Degree (Height)')
+        tb_plot.set_ylabel('Velar Constriction Degree (Height)')
         tb_plot.set_ylim(17, -3)
+
+        figure_outputs, (lx_plot, tc_plot) = plt.subplots(2)
+
+        figure_outputs.suptitle('Predicted Tract Variable Trajectories')
+
+        # Lip Protrusion Trajectory Subplot
+
+        lx_plot.plot(predicted_lx, label='Predicted')
+        if show_target:
+            lx_plot.plot(target_lx, label='Target')
+        if target_lx[-4:] == [0,0,0,0]:
+            lx_plot.set_xlim(0,5)
+        lx_plot.set_title('Lip Protrusion Variable')
+        lx_plot.set_ylabel('Protrusion Degree')
+        lx_plot.set_ylim(0, 13)
+
+        lx_plot.legend()
+
+        # Tongue (Palatal) Constriction Trajectory Subplot
+
+        tc_plot.plot(predicted_tc, label='Predicted')
+        if show_target:
+            tc_plot.plot(target_tc, label='Target')
+        if target_lx[-4:] == [0,0,0,0]:
+            tc_plot.set_xlim(0,5)
+        tc_plot.set_title('Tongue Body Palatal Contriction Variable')
+        tc_plot.set_ylabel('Palatal Constriction Degree (Front)')
+        tc_plot.set_ylim(155, 90)
+
+        tc_plot.legend()
 
         # Plot Encoder-Decoder Attention
 
@@ -494,25 +546,19 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 
         if self.path is None:
             model_num = 1
-            while glob.glob(os.path.join('saved_models', f'gestnet_{model_num}_*.pt')):
+            while glob.glob(os.path.join('saved_models', f'gestnet_4a_{model_num}_*.pt')):
                 model_num += 1
 
-            self.path = os.path.join('saved_models', f'gestnet_{model_num}_')
+            self.path = os.path.join('saved_models', f'gestnet_4a_{model_num}_')
         else:
             model_num = self.path.split('_')[-2]
 
         saveas = f'{self.path}{str(len(self.loss_list))}.pt'
 
         torch.save(save_dict, saveas)
-        print(f'Model saved as gestnet_{model_num}_{str(len(self.loss_list))} in directory saved_models.')
+        print(f'Model saved as gestnet_4a_{model_num}_{str(len(self.loss_list))} in directory saved_models.')
 
     def count_params(self):  # Count trainable model parameters
         params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         print('The model has ' + str(params) + ' trainable parameters.')
 
-
-# Load a premade Dataset object for stepwise height harmony
-
-with warnings.catch_warnings():
-    warnings.simplefilter('ignore')
-    data_stepwise = Dataset('trainingdata_stepwise.txt')
