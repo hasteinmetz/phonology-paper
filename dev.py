@@ -98,6 +98,10 @@ class Dataset:  # Dataset object class utilizing Torchtext
 
         data = TabularDataset(path=path, format='tsv', skip_header=True, fields=datafields)
 
+        # test_data = ["t-i","t-a","t-e","t-o","t-u","t-y","t-ø","t-ɯ","it-H","at-H","et-H","ot-H","ut-H","yt-H","øt-H","ɯt-H","it-L","at-L","et-L","ot-L","ut-L","yt-L","øt-L","ɯt-L"]
+
+        # self.vocabulary.extend(test_data)
+
         input_field.build_vocab(data, min_freq=1)
         data_iter = BucketIterator(data,
                                    batch_size=self.batch_size,

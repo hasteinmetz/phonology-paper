@@ -9,10 +9,6 @@ import argparse
 import pandas as pd
 import statsmodels.api as sm
 
-def analyze(data):
-    '''Analyze the data'''
-    return
-
 def main(args):
 
     input_file = args.input
@@ -22,7 +18,7 @@ def main(args):
     model = Seq2Seq(training_data=data_stepwise)
 
     if args.load == 'none':
-        model.train_model(training_data=data_stepwise, n_epochs=20)
+        model.train_model(training_data=data_stepwise, n_epochs=args.epochs)
         model.save()
     else:
         model = Seq2Seq(load=args.load)
@@ -51,6 +47,7 @@ if __name__ == "__main__":
     parser.add_argument(
         '--input', help="(str) the input data file", default='./trainingdata_stepwise_turkish.tsv'
         )
+    parser.add_argument('--epochs', help="(int) number of epochs to run", default=20, type=int)
     parser.add_argument('--load', help="(str) the model file to load", default="none")
     args = parser.parse_args()
     main(args)
