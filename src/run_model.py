@@ -4,7 +4,7 @@ Script to run model code from https://github.com/caitlinsmith14/gestnet
 See the paper https://pages.jh.edu/csmit372/pdf/smithohara_scil2021_paper.pdf
 The code was adapted to see if NN's would pay attention to 2 harmony systems
 '''
-from gestnet import *
+from dev import *
 import argparse
 
 def main(args):
@@ -13,10 +13,14 @@ def main(args):
 
     data_stepwise = Dataset(input_file)
 
-    model = Seq2Seq(training_data=data_stepwise)
+    model = Seq2Seq(training_data=data_stepwise, articulators=['la_output', 'tb_output', 'tc_output'])
 
     if args.load == 'none':
-        model.train_model(training_data=data_stepwise, n_epochs=args.epochs)
+        print("Training the model")
+        model.train_model(
+            training_data=data_stepwise, 
+            n_epochs=args.epochs
+            )
         model.save()
     else:
         model = Seq2Seq(load=args.load)
@@ -40,9 +44,9 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--input', help="(str) the input data file", default='./trainingdata_stepwise_turkish.tsv'
+        '--input', help="(str) the input data file", default='./trainingdata_stepwise_turkish_3_articulators.tsv'
         )
-    parser.add_argument('--load', help="(str) the model file to load", default="none")
-    parser.add_argument('--epochs', help="(int) epochs to train the model", default=200)
+    parser.add_argument('--load', help="(str) the model file to load", default="none", type=str)
+    parser.add_argument('--epochs', help="(int) epochs to train the model", default=200, type=int)
     args = parser.parse_args()
     main(args)
