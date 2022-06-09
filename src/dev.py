@@ -11,6 +11,7 @@ import os
 import re
 import torch
 import torch.nn as nn
+from torch.nn import MSELoss
 import torch.nn.functional as F
 import torch.optim as optim
 from torchtext.data import BucketIterator, Field, TabularDataset
@@ -63,6 +64,19 @@ class LinearTransform:
 	def linear_transform_back(self, matrix: List[float]):
 		r = [x * self.range for x in matrix]
 		return r
+
+
+# define a new loss function that works better for values between 0 and 1
+
+class RMSELoss(MSELoss):
+	__constants__ = ['reduction']
+	
+	def __init__(self, size_average=None, reduce=None, reduction: str = 'mean') -> None:
+		super(RMSELoss, self).__init__(size_average, reduce, reduction)
+
+	def forward(self, input, target):
+		mse_loss = F.mse_loss(input, target, reduction=self.reduction)
+		return torch.sqrt(mse_loss)
 
 ###########
 # DATASET #
@@ -276,7 +290,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 		# Hyperparameters / Device Settings
 
 		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-		self.loss_function = nn.MSELoss(reduction='mean')
+		self.loss_function = RMSELoss(reduction='mean')
 
 		# Load a trained model and its subcomponents
 
@@ -367,8 +381,23 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 			attn_map_seq[t] = attn_map
 
 			input_tok = output_tok
-
+		
 		return output_seq, attn_map_seq
+
+	def get_hidden(self, input_seq, target_seq):
+		with torch.no_grad():
+			target_length = target_seq.shape[0]
+
+			encoder_outputs, hidden, _ = self.encoder(input_seq)
+
+			input_tok = self.init_input_tok
+
+			for t in range(target_length):
+				output_tok, hidden, attn_map = self.decoder(input_tok,
+															hidden,
+															encoder_outputs)
+
+		return hidden
 
 	def train_model(self, training_data, n_epochs=1):  # Train the model on the provided dataset
 
@@ -376,7 +405,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 
 		with warnings.catch_warnings():
 			warnings.simplefilter('ignore')
-			for e in tqdm(range(n_epochs), leave=False, display=False):
+			for e in tqdm(range(n_epochs)):
 
 				early_stop_loss = 0
 				previous_loss = 1000
@@ -391,6 +420,8 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 					mask = torch.where(target != 0, 1., 0.)
 					predicted, enc_dec_attn_seq = self(source, target)
 					predicted_masked = mask * predicted
+
+					prediction_scaled = batch
 
 					loss = self.loss_function(predicted_masked.float(), target.float())
 					loss.backward()

@@ -13,7 +13,9 @@ def main(args):
 
     data_stepwise = Dataset(input_file)
 
-    model = Seq2Seq(training_data=data_stepwise, articulators=['la_output', 'tb_output', 'tc_output'])
+    print(f"Training a model with the following articulators: {args.articulators}")
+
+    model = Seq2Seq(training_data=data_stepwise, articulators=args.articulators)
 
     if args.load == 'none':
         print("Training the model")
@@ -48,5 +50,11 @@ if __name__ == "__main__":
         )
     parser.add_argument('--load', help="(str) the model file to load", default="none", type=str)
     parser.add_argument('--epochs', help="(int) epochs to train the model", default=200, type=int)
+    parser.add_argument(
+        "--articulators",
+        nargs="*", # so that multiple argument can be entered
+        type=str,
+        default=['la_output', 'tb_output', 'tc_output']
+    )
     args = parser.parse_args()
     main(args)
