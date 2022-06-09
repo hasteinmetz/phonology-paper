@@ -275,22 +275,18 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 	def __init__(self,
 				 training_data=None,  # training data (Dataset class object)
 				 load='',  # path to file for loading previously trained model
-				 seg_embed_size=64,  # size of segment embedding
-				 hidden_size=64,  # size of hidden layer
-				 attn_size=64,  # size of encoder-decoder attention vector
+				 seg_embed_size=32,  # size of segment embedding
+				 hidden_size=32,  # size of hidden layer
+				 attn_size=32,  # size of encoder-decoder attention vector
 				 articulators=['la_output', 'tb_output'], # the articulators used to train
 				 optimizer='adam',  # what type of optimizer (Adam or SGD)
 				 learning_rate=.0001):  # learning rate of the model
 		super(Seq2Seq, self).__init__()
 
-		# Seq2Seq Parameters
-
-		self.init_input_tok = nn.Parameter(torch.rand(1, len(articulators)))  # initialize first decoder input (learnable)
-
 		# Hyperparameters / Device Settings
 
 		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-		self.loss_function = RMSELoss(reduction='mean')
+		self.loss_function = nn.SmoothL1Loss(reduction='mean')
 
 		# Load a trained model and its subcomponents
 
@@ -299,7 +295,11 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 			checkpoint = torch.load(load)
 
 			self.articulators = checkpoint['articulators']
-			assert articulators == self.articulators
+			
+			# Seq2Seq Parameters
+
+			self.init_input_tok = nn.Parameter(torch.rand(1, len(self.articulators)))  # initialize first decoder input (learnable)
+
 
 			self.encoder = Encoder(vocab_size=checkpoint['encoder_params'][0],
 								   seg_embed_size=checkpoint['encoder_params'][1],
@@ -335,6 +335,10 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 
 			# set the articulators as an attribute (to help with saving and loading)
 			self.articulators = articulators
+
+			# Seq2Seq Parameters
+
+			self.init_input_tok = nn.Parameter(torch.rand(1, len(self.articulators)))  # initialize first decoder input (learnable)
 
 			self.encoder = Encoder(vocab_size=len(training_data.input_field.vocab),
 								   seg_embed_size=seg_embed_size,
@@ -428,6 +432,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 					self.optimizer.step()
 				
 				avg_loss = self.evaluate_model(training_data, verbose=False)
+				print(f'Average loss per word this epoch:{avg_loss}')
 
 				if avg_loss > previous_loss:
 					early_stop_loss += 1
@@ -464,7 +469,7 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 
 			if verbose:
 				# changed to cross entropy loss
-				print(f'Average loss per word this epoch:')
+				print(f'Average loss per word this epoch:{average_loss}')
 
 			return average_loss
 

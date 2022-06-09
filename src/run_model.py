@@ -15,10 +15,9 @@ def main(args):
 
     print(f"Training a model with the following articulators: {args.articulators}")
 
-    model = Seq2Seq(training_data=data_stepwise, articulators=args.articulators)
-
     if args.load == 'none':
         print("Training the model")
+        model = Seq2Seq(training_data=data_stepwise, articulators=args.articulators)
         model.train_model(
             training_data=data_stepwise, 
             n_epochs=args.epochs
