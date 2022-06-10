@@ -280,13 +280,13 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 				 attn_size=32,  # size of encoder-decoder attention vector
 				 articulators=['la_output', 'tb_output'], # the articulators used to train
 				 optimizer='adam',  # what type of optimizer (Adam or SGD)
-				 learning_rate=.0001):  # learning rate of the model
+				 learning_rate=.00025):  # learning rate of the model
 		super(Seq2Seq, self).__init__()
 
 		# Hyperparameters / Device Settings
 
 		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-		self.loss_function = nn.SmoothL1Loss(reduction='mean')
+		self.loss_function = nn.MSELoss(reduction='mean')
 
 		# Load a trained model and its subcomponents
 
@@ -432,7 +432,6 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 					self.optimizer.step()
 				
 				avg_loss = self.evaluate_model(training_data, verbose=False)
-				print(f'Average loss per word this epoch:{avg_loss}')
 
 				if avg_loss > previous_loss:
 					early_stop_loss += 1
@@ -538,6 +537,15 @@ class Seq2Seq(nn.Module):  # Combine encoder and decoder into sequence-to-sequen
 			# set the limits of each chart
 			max_y = max(max(predicted_art), max(target_art))
 			min_y = min(min(predicted_art), min(target_art))
+			if art == "la_output":
+				min_y = min(-3, min_y)
+				max_y = max(max_y, 12)
+			if art == "tb_output":
+				min_y = min(0, min_y)
+				max_y = max(max_y, 17)
+			if art == "tc_output":
+				min_y = min(90, min_y)
+				max_y = max(max_y, 155)
 			y_max = ceil(max_y + (0.05 * max_y))
 			y_min = floor(min_y - (0.05 * abs(min_y)))
 			art_plot.set_ylim(y_max, y_min)
